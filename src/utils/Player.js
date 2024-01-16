@@ -1,12 +1,12 @@
 import { Howl, Howler } from "howler";
 import { musicData, siteStatus, siteSettings } from "@/stores";
 import { getSongUrl, getSongLyric, songScrobble } from "@/api/song";
-import { checkPlatform, getLocalCoverData } from "@/utils/helper";
+import { checkPlatform, getLocalCoverData, getBlobUrlFromUrl } from "@/utils/helper";
 import { decode as base642Buffer } from "@/utils/base64";
 import { getSongPlayTime } from "@/utils/timeTools";
 import { getCoverGradient } from "@/utils/cover-color";
 import { isLogin } from "@/utils/auth";
-import parseLyric from "@/utils/parseLyric";
+import { parseLyric, parseLocalLrc } from "@/utils/parseLyric";
 
 // 全局播放器
 let player;
@@ -24,13 +24,15 @@ let spectrumsData = {
   analyser: null,
   audioCtx: null,
 };
+// 默认标题
+let defaultTitle = document.title;
 
 /**
  * 初始化播放器
  */
 export const initPlayer = async (playNow = false) => {
   try {
-    // 停止播放当前歌曲
+    // 停止播放器
     soundStop();
     // 获取基础数据
     const music = musicData();
@@ -44,6 +46,7 @@ export const initPlayer = async (playNow = false) => {
     playSongData.id = playMode === "dj" ? playSongData.mainTrackId : playSongData.id;
     // 是否为本地歌曲
     const isLocalSong = playSongData?.path ? true : false;
+    console.log("当前为本地歌曲");
     // 获取封面
     if (isLocalSong) {
       music.playSongData.localCover = await getLocalCoverData(playSongData?.path);
@@ -152,7 +155,6 @@ const getNormalSongUrl = async (id, status, playNow) => {
     const url = res.data[0].url.replace(/^http:/, "https:");
     // 更改状态
     if (playNow && url) status.playState = true;
-    status.playLoading = false;
     return url;
   } catch (error) {
     status.playLoading = false;
@@ -207,22 +209,27 @@ const getFromUnblockMusic = async (data, status, playNow) => {
  * @param {number} seek - 初始播放进度（ 默认为 0 ）
  */
 export const createPlayer = async (src, autoPlay = true) => {
-  console.log("播放地址：", src);
   try {
     // pinia
     const music = musicData();
     const status = siteStatus();
     const settings = siteSettings();
-    const { playSongSource } = music;
+    const { playMode } = status;
+    const { playSongSource, playList } = music;
+    const { showSpectrums, memorySeek, useMusicCache } = settings;
     // 当前播放歌曲数据
     const playSongData = music.getPlaySongData;
+    // 获取播放链接（非电台及云盘歌曲）
+    const songUrl =
+      useMusicCache && playMode !== "dj" && !playSongData.pc ? await getBlobUrlFromUrl(src) : src;
+    console.log("播放地址：", songUrl);
     // 初始化播放器
+    if (player) soundStop();
     player = new Howl({
-      src: [src],
-      format: ["mp3", "flac"],
+      src: [songUrl],
+      format: ["mp3", "flac", "dolby", "webm"],
       html5: true,
-      pool: 10,
-      preload: true,
+      preload: "metadata",
       volume: status.playVolume,
       rate: status.playRate,
     });
@@ -233,7 +240,7 @@ export const createPlayer = async (src, autoPlay = true) => {
     music.setPlayHistory(playSongData);
     // 生成音乐频谱
     // 由于浏览器安全策略，无法在此处启动
-    if (settings.showSpectrums && checkPlatform.electron()) processSpectrum(player);
+    if (showSpectrums && checkPlatform.electron()) processSpectrum(player);
     // 加载完成
     player?.once("load", () => {
       console.info("🎵 加载完成", player, status.playState);
@@ -243,10 +250,7 @@ export const createPlayer = async (src, autoPlay = true) => {
         fadePlayOrPause("play");
       }
       // 恢复进度（防止播放到结尾时触发 bug）
-      if (
-        settings.memorySeek &&
-        status.playTimeData?.duration - status.playTimeData?.currentTime > 2
-      ) {
+      if (memorySeek && status.playTimeData?.duration - status.playTimeData?.currentTime > 2) {
         setSeek(status.playTimeData?.currentTime ?? 0);
       } else {
         setSeek();
@@ -256,14 +260,7 @@ export const createPlayer = async (src, autoPlay = true) => {
       status.playLoading = false;
       // 发送歌曲名
       if (checkPlatform.electron()) {
-        const songName = playSongData.name || "未知曲目";
-        const songArtist =
-          status.playMode === "dj"
-            ? "电台节目"
-            : Array.isArray(playSongData.artists)
-            ? playSongData.artists.map((ar) => ar.name).join(" / ")
-            : playSongData.artists || "未知歌手";
-        electron.ipcRenderer.send("songNameChange", songName + " - " + songArtist);
+        electron.ipcRenderer.send("songNameChange", getPlaySongName());
       }
       // 听歌打卡
       if (isLogin() && !playSongData?.path) {
@@ -285,6 +282,8 @@ export const createPlayer = async (src, autoPlay = true) => {
       if (checkPlatform.electron()) {
         electron.ipcRenderer.send("songStateChange", true);
       }
+      // 更改页面标题
+      if (!checkPlatform.electron()) document.title = getPlaySongName();
     });
     // 暂停播放
     player?.on("pause", () => {
@@ -296,6 +295,8 @@ export const createPlayer = async (src, autoPlay = true) => {
       if (checkPlatform.electron()) {
         electron.ipcRenderer.send("songStateChange", false);
       }
+      // 更改页面标题
+      if (!checkPlatform.electron()) document.title = defaultTitle || "SPlayer";
     });
     // 结束播放
     player?.on("end", () => {
@@ -311,25 +312,34 @@ export const createPlayer = async (src, autoPlay = true) => {
       }
     });
     // 加载失败
-    player?.on("loaderror", (_, errCode) => {
-      console.log("错误");
+    player?.on("loaderror", (id, errCode) => {
+      console.log("播放出现错误：", id, errCode);
       // 更改状态
       status.playLoading = false;
-      status.playState = false;
       // https://github.com/goldfire/howler.js?tab=readme-ov-file#onloaderror-function
-      // 1-用户代理应用户请求中止了获取媒体资源的过程
-      // 2-某个描述的网络错误导致用户代理在确定资源可用后停止获取媒体资源
-      // 3-在确定资源可用后，对媒体资源进行解码时发生某种描述错误
-      // 4-由src属性或分配的媒体提供程序对象指示的媒体资源不合适
-      if (errCode === 3) {
-        $message.error("播放出错，媒体进行解码时发生错误");
-      } else if (errCode === 4) {
-        $message.error("播放出错，不支持的音频格式");
-      } else {
-        $message.error("播放遇到错误");
+      switch (errCode) {
+        case 1:
+          $message.error("播放出错，用户代理中止了获取媒体");
+          break;
+        case 2:
+          $message.error("播放出错，未知的网络错误");
+          break;
+        case 3:
+          $message.error("播放出错，媒体进行解码时发生错误");
+          break;
+        case 4:
+          $message.error("播放出错，不支持的音频格式或媒体资源不合适");
+          break;
+        default:
+          $message.error("播放遇到未知错误");
+          break;
       }
       // 下一曲
-      changePlayIndex();
+      if (playList.length > 1) {
+        changePlayIndex();
+      } else {
+        status.playState = false;
+      }
     });
     // 返回音频对象
     return (window.$player = player);
@@ -497,13 +507,6 @@ export const setVolume = (volume) => {
 };
 
 /**
- * 检查是否存在于播放器且正在播放
- */
-export const checkPlayer = () => {
-  return player && player?.playing();
-};
-
-/**
  * 停止播放器
  */
 export const soundStop = () => {
@@ -595,17 +598,20 @@ const getSongLyricData = async (islocal, data) => {
     const music = musicData();
     const setDefaults = () => {
       music.playSongLyric = {
+        hasLrcTran: false,
+        hasLrcRoma: false,
+        hasYrc: false,
+        hasYrcTran: false,
+        hasYrcRoma: false,
         lrc: [],
         yrc: [],
-        hasTran: false,
-        hasRoma: false,
-        hasYrc: false,
       };
     };
     if (islocal) {
       const lyricData = await electron.ipcRenderer.invoke("getMusicLyric", data?.path);
       if (lyricData) {
-        music.playSongLyric = parseLyric({ lrc: { lyric: lyricData } });
+        const result = parseLocalLrc(lyricData);
+        music.playSongLyric = result ? (music.playSongLyric = result) : setDefaults();
       } else {
         console.log("该歌曲暂无歌词");
         setDefaults();
@@ -614,7 +620,8 @@ const getSongLyricData = async (islocal, data) => {
       const lyricResponse = await getSongLyric(data?.id);
       const lyricData = lyricResponse?.lrc;
       if (lyricData) {
-        music.playSongLyric = parseLyric(lyricResponse);
+        const result = parseLyric(lyricResponse);
+        result ? (music.playSongLyric = result) : setDefaults();
       } else {
         console.log("该歌曲暂无歌词");
         setDefaults();
@@ -641,8 +648,8 @@ const initMediaSession = async (data, cover, islocal, isDj) => {
       artist: isDj
         ? "电台节目"
         : islocal
-        ? data.artists
-        : data.artists?.map((a) => a.name)?.join(" & "),
+          ? data.artists
+          : data.artists?.map((a) => a.name)?.join(" & "),
       album: isDj ? "电台节目" : islocal ? data.album : data.album.name,
       artwork: islocal
         ? [
@@ -756,6 +763,69 @@ const updateSpectrums = (analyser, dataArray) => {
   requestAnimationFrame(() => {
     updateSpectrums(analyser, dataArray);
   });
+};
+
+/**
+ * 获取当前播放歌曲名
+ */
+const getPlaySongName = () => {
+  // pinia
+  const status = siteStatus();
+  const music = musicData();
+  const playSongData = music.getPlaySongData;
+  // 返回歌曲数据
+  const songName = playSongData.name || "未知曲目";
+  const songArtist =
+    status.playMode === "dj"
+      ? "电台节目"
+      : Array.isArray(playSongData.artists)
+        ? playSongData.artists.map((ar) => ar.name).join(" / ")
+        : playSongData.artists || "未知歌手";
+  return songName + " - " + songArtist;
+};
+
+/**
+ * 播放所有歌曲
+ * @param {Array} playlist - 包含歌曲信息的数组
+ * @param {string} mode - 播放模式
+ */
+export const playAllSongs = async (playlist, mode = "normal") => {
+  try {
+    // pinia
+    const music = musicData();
+    const status = siteStatus();
+    if (!playlist) return false;
+    // 关闭心动模式
+    status.playHeartbeatMode = false;
+    // 更改模式和歌单
+    status.playMode = mode;
+    music.playList = playlist.slice();
+    // 是否处于歌单内
+    const songId = music.getPlaySongData?.id;
+    const existingIndex = playlist.findIndex((song) => song.id === songId);
+    // 若不处于
+    if (existingIndex === -1 || !songId) {
+      console.log("不在歌单内");
+      music.playSongData = playlist[0];
+      status.playIndex = 0;
+      // 初始化播放器
+      await initPlayer(true);
+    } else {
+      console.log("处于歌单内");
+      music.playSongData = playlist[existingIndex];
+      status.playIndex = existingIndex;
+      // 播放
+      fadePlayOrPause();
+    }
+    // 获取封面
+    if (music.getPlaySongData?.path) {
+      music.playSongData.localCover = await getLocalCoverData(music.getPlaySongData?.path);
+    }
+    $message.info("已开始播放", { showIcon: false });
+  } catch (error) {
+    console.error("播放全部歌曲出错：", error);
+    $message.error("播放全部歌曲出现错误");
+  }
 };
 
 /*

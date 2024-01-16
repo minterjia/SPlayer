@@ -48,7 +48,7 @@
             </n-text>
           </div>
           <!-- 标签 -->
-          <n-space v-if="playListDetail?.tags" class="tags">
+          <n-flex v-if="playListDetail?.tags" class="tags">
             <n-tag
               v-for="(item, index) in playListDetail.tags"
               :key="index"
@@ -64,9 +64,9 @@
             >
               {{ item }}
             </n-tag>
-          </n-space>
+          </n-flex>
           <!-- 数量 -->
-          <n-space class="num">
+          <n-flex class="num">
             <div v-if="playListDetail.count" class="num-item">
               <n-icon depth="3" size="18">
                 <SvgIcon icon="music-note" />
@@ -85,7 +85,7 @@
               </n-icon>
               <n-text depth="3">{{ getTimestampTime(playListDetail.updateTime) }}</n-text>
             </div>
-          </n-space>
+          </n-flex>
           <!-- 简介 -->
           <n-ellipsis
             v-if="playListDetail.description"
@@ -108,17 +108,18 @@
     </Transition>
     <!-- 功能区 -->
     <Transition name="fade" mode="out-in">
-      <n-space :key="isUserPLayList" class="menu" justify="space-between">
-        <n-space class="left">
+      <n-flex :key="isUserPLayList" class="menu" justify="space-between">
+        <n-flex class="left">
           <n-button
             :disabled="playListData === null || playListData === 'empty' || loadingMsg !== null"
+            :focusable="false"
             type="primary"
             class="play"
             tag="div"
             circle
             strong
             secondary
-            @click="playAllSongs"
+            @click="playAllSongs(playListData)"
           >
             <template #icon>
               <n-icon size="32">
@@ -128,6 +129,8 @@
           </n-button>
           <n-button
             v-if="!isUserPLayList"
+            :focusable="false"
+            class="like"
             size="large"
             tag="div"
             round
@@ -148,6 +151,8 @@
           </n-button>
           <n-button
             v-else
+            :focusable="false"
+            class="like"
             size="large"
             tag="div"
             round
@@ -163,7 +168,15 @@
             编辑歌单
           </n-button>
           <n-dropdown :options="moreOptions" trigger="hover" placement="bottom-start">
-            <n-button size="large" tag="div" circle strong secondary>
+            <n-button
+              :focusable="false"
+              class="more"
+              size="large"
+              tag="div"
+              circle
+              strong
+              secondary
+            >
               <template #icon>
                 <n-icon>
                   <SvgIcon icon="format-list-bulleted" />
@@ -171,8 +184,8 @@
               </template>
             </n-button>
           </n-dropdown>
-        </n-space>
-        <n-space class="right">
+        </n-flex>
+        <n-flex class="right">
           <!-- 模糊搜索 -->
           <Transition name="fade" mode="out-in">
             <n-input
@@ -191,8 +204,8 @@
               </template>
             </n-input>
           </Transition>
-        </n-space>
-      </n-space>
+        </n-flex>
+      </n-flex>
     </Transition>
     <!-- 列表 -->
     <Transition name="fade" mode="out-in">
@@ -216,7 +229,9 @@
   </div>
   <div v-else class="title">
     <n-text class="key">参数不完整</n-text>
-    <n-button class="back" strong secondary @click="router.go(-1)"> 返回上一页 </n-button>
+    <n-button :focusable="false" class="back" strong secondary @click="router.go(-1)">
+      返回上一页
+    </n-button>
   </div>
 </template>
 
@@ -224,7 +239,7 @@
 import { NIcon } from "naive-ui";
 import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
-import { musicData, siteData, siteStatus } from "@/stores";
+import { siteData } from "@/stores";
 import {
   getPlayListDetail,
   getAllPlayList,
@@ -236,18 +251,14 @@ import { getSongDetail } from "@/api/song";
 import { formatNumber, fuzzySearch } from "@/utils/helper";
 import { isLogin } from "@/utils/auth";
 import { getTimestampTime } from "@/utils/timeTools";
-import { fadePlayOrPause, initPlayer } from "@/utils/Player";
+import { playAllSongs } from "@/utils/Player";
 import debounce from "@/utils/debounce";
 import formatData from "@/utils/formatData";
 import SvgIcon from "@/components/Global/SvgIcon";
 
 const router = useRouter();
 const data = siteData();
-const music = musicData();
-const status = siteStatus();
 const { userLikeData, userData } = storeToRefs(data);
-const { playList, playSongData } = storeToRefs(music);
-const { playIndex, playMode, playHeartbeatMode } = storeToRefs(status);
 
 // 歌单 ID
 const playlistId = ref(
@@ -381,34 +392,6 @@ const getBigPlayListData = async (id, count) => {
   // 关闭加载提示
   loadingMsg.value?.destroy();
   loadingMsg.value = null;
-};
-
-// 播放歌单全部歌曲
-const playAllSongs = async () => {
-  if (!playListData.value) return false;
-  // 关闭心动模式
-  playHeartbeatMode.value = false;
-  // 更改模式和歌单
-  playMode.value = "normal";
-  playList.value = playListData.value.slice();
-  // 是否处于歌单内
-  const songId = music.getPlaySongData?.id;
-  const existingIndex = playListData.value.findIndex((song) => song.id === songId);
-  // 若不处于
-  if (existingIndex === -1 || !songId) {
-    console.log("不在歌单内");
-    playSongData.value = playListData.value[0];
-    playIndex.value = 0;
-    // 初始化播放器
-    await initPlayer(true);
-  } else {
-    console.log("处于歌单内");
-    playSongData.value = playListData.value[existingIndex];
-    playIndex.value = existingIndex;
-    // 播放
-    fadePlayOrPause();
-  }
-  $message.info("已开始播放", { showIcon: false });
 };
 
 // 歌曲模糊搜索
@@ -566,6 +549,7 @@ onBeforeUnmount(() => {
         font-size: 30px;
         font-weight: bold;
         margin-bottom: 12px;
+        -webkit-line-clamp: 2;
       }
       .creator {
         display: flex;
@@ -640,9 +624,11 @@ onBeforeUnmount(() => {
     }
   }
   .menu {
+    flex-wrap: nowrap;
     align-items: center;
     margin: 26px 0;
     .left {
+      flex-wrap: nowrap;
       align-items: center;
       .play {
         --n-width: 46px;
@@ -661,6 +647,82 @@ onBeforeUnmount(() => {
           background-color 0.3s;
         &.n-input--focus {
           width: 200px;
+        }
+      }
+    }
+  }
+
+  @media (max-width: 700px) {
+    .detail {
+      .cover {
+        width: 140px;
+        height: 140px;
+        min-width: 140px;
+      }
+      .data {
+        .name {
+          font-size: 20px;
+          margin-bottom: 4px;
+        }
+        .creator {
+          .n-avatar {
+            width: 20px;
+            height: 20px;
+            margin-right: 6px;
+          }
+          .nickname {
+            font-size: 12px;
+          }
+          .create-time {
+            margin-left: 6px;
+            font-size: 12px;
+          }
+        }
+        .tags {
+          .pl-tags {
+            font-size: 12px;
+            padding: 0 12px;
+          }
+        }
+        .num,
+        .description {
+          display: none !important;
+        }
+      }
+    }
+    .menu {
+      margin: 20px 0;
+      .left {
+        .play {
+          --n-width: 40px;
+          --n-height: 40px;
+          .n-icon {
+            font-size: 22px !important;
+          }
+        }
+        .like {
+          --n-height: 36px;
+          --n-font-size: 13px;
+          --n-padding: 0 16px;
+          --n-icon-size: 18px;
+          :deep(.n-button__icon) {
+            margin: 0;
+          }
+          :deep(.n-button__content) {
+            display: none;
+          }
+        }
+        .more {
+          --n-height: 36px;
+          --n-font-size: 13px;
+          --n-icon-size: 18px;
+        }
+      }
+      .right {
+        .search {
+          height: 36px;
+          width: 130px;
+          font-size: 13px;
         }
       }
     }

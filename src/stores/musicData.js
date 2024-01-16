@@ -19,11 +19,20 @@ const useMusicDataStore = defineStore("musicData", {
       playSongSource: 0,
       // 当前歌曲歌词数据
       playSongLyric: {
-        lrc: [],
-        yrc: [],
-        hasTran: false,
-        hasRoma: false,
+        // 是否具有普通翻译
+        hasLrcTran: false,
+        // 是否具有普通音译
+        hasLrcRoma: false,
+        // 是否具有逐字歌词
         hasYrc: false,
+        // 是否具有逐字翻译
+        hasYrcTran: false,
+        // 是否具有逐字音译
+        hasYrcRoma: false,
+        // 普通歌词数组
+        lrc: [],
+        // 逐字歌词数据
+        yrc: [],
       },
       // 本地歌曲目录
       localSongPath: [],
@@ -116,6 +125,7 @@ const useMusicDataStore = defineStore("musicData", {
     async setPersonalFmToTrash(id) {
       try {
         if (!isLogin()) return $message.warning("请登录后使用");
+        const status = siteStatus();
         const result = await setFmToTrash(id);
         if (result.code === 200) {
           $message.success("已移至垃圾桶");

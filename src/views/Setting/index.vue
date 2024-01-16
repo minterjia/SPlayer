@@ -17,7 +17,7 @@
     <n-tabs
       ref="setTabsRef"
       v-model:value="setTabsValue"
-      type="line"
+      type="segment"
       @update:value="settingTabChange"
     >
       <n-tab name="setTab1"> 常规 </n-tab>
@@ -77,8 +77,15 @@
           <n-switch v-model:value="showSider" :round="false" />
         </n-card>
         <n-card class="set-item">
+          <div class="name">
+            侧边栏展示封面
+            <n-text class="tip">侧边栏歌单是否展示歌单封面</n-text>
+          </div>
+          <n-switch v-model:value="siderShowCover" :disabled="!showSider" :round="false" />
+        </n-card>
+        <n-card class="set-item">
           <div class="name">显示搜索历史</div>
-          <n-switch v-model:value="searchHistory" :round="false" />
+          <n-switch v-model:value="showSearchHistory" :round="false" />
         </n-card>
         <n-card class="set-item">
           <div class="name">
@@ -213,6 +220,13 @@
           <n-switch v-model:value="memorySeek" :disabled="autoPlay" :round="false" />
         </n-card>
         <n-card class="set-item">
+          <div class="name">
+            音乐资源自动缓存
+            <n-text class="tip"> 可能会造成加载缓慢，将在下一首播放或刷新时生效 </n-text>
+          </div>
+          <n-switch v-model:value="useMusicCache" :round="false" />
+        </n-card>
+        <n-card class="set-item">
           <div class="name">音乐渐入渐出</div>
           <n-switch v-model:value="songVolumeFade" :round="false" />
         </n-card>
@@ -273,8 +287,8 @@
                 playerBackgroundType === "animation"
                   ? "流体效果，较消耗性能，请谨慎开启"
                   : playerBackgroundType === "blur"
-                  ? "将封面模糊处理为背景"
-                  : "提取封面主色为渐变色"
+                    ? "将封面模糊处理为背景"
+                    : "提取封面主色为渐变色"
               }}
             </n-text>
           </div>
@@ -485,7 +499,7 @@
             默认下载文件夹
             <n-text class="tip">{{ downloadPath || "不设置则会每次选择保存位置" }}</n-text>
           </div>
-          <n-space>
+          <n-flex>
             <Transition name="fade" mode="out-in">
               <n-button
                 v-if="downloadPath"
@@ -500,7 +514,22 @@
             <n-button :disabled="!checkPlatform.electron()" strong secondary @click="choosePath">
               更改
             </n-button>
-          </n-space>
+          </n-flex>
+        </n-card>
+        <n-card class="set-item">
+          <div class="name">
+            同时下载歌曲元信息
+            <n-text class="tip">为当前下载歌曲附加封面及歌词等元信息</n-text>
+          </div>
+          <n-switch v-model:value="downloadMeta" :round="false" />
+        </n-card>
+        <n-card class="set-item">
+          <div class="name">下载歌曲时同时下载封面</div>
+          <n-switch v-model:value="downloadCover" :disabled="!downloadMeta" :round="false" />
+        </n-card>
+        <n-card class="set-item">
+          <div class="name">下载歌曲时同时下载歌词</div>
+          <n-switch v-model:value="downloadLyrics" :disabled="!downloadMeta" :round="false" />
         </n-card>
       </div>
       <!-- 其他 -->
@@ -585,7 +614,7 @@ const {
   lrcMousePause,
   lyricsFontSize,
   lyricsBlur,
-  searchHistory,
+  showSearchHistory,
   autoSignIn,
   bottomLyricShow,
   downloadPath,
@@ -595,6 +624,11 @@ const {
   playSearch,
   showPlaylistCount,
   showSpectrums,
+  siderShowCover,
+  useMusicCache,
+  downloadMeta,
+  downloadCover,
+  downloadLyrics,
 } = storeToRefs(settings);
 
 // 标签页数据
